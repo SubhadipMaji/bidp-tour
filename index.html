@@ -1,0 +1,606 @@
+<!doctype html>
+<!--
+  ============================================================================
+  BidP PLANT TOUR — LIVE ROUTE TRACKER  (self-hosted / Firebase version)
+  ============================================================================
+  Everything is in this ONE file. To make it live:
+
+  STEP 1 — Create a free Firebase project
+    • Go to https://console.firebase.google.com → "Add project" (any name).
+    • In the project, open  Build → Firestore Database → "Create database"
+      → start in *production mode* → pick any region (asia-south1 = Mumbai).
+    • Open  Build → Authentication → Get started → enable "Anonymous".
+      (This lets visitors update the board with NO login. Optional but
+       recommended — without it, use the open rules noted in STEP 3.)
+
+  STEP 2 — Get your web config
+    • Project settings (gear icon) → "Your apps" → click the </> (Web) icon
+      → register an app → copy the firebaseConfig object it shows you.
+    • Paste it over the FIREBASE_CONFIG placeholder a few lines below.
+
+  STEP 3 — Set Firestore security rules
+    • Firestore → Rules tab → paste this, then Publish:
+
+        rules_version = '2';
+        service cloud.firestore {
+          match /databases/{database}/documents {
+            match /teams/{tid} {
+              allow read: if true;                 // anyone can watch the board
+              allow write: if request.auth != null;// any visitor who opened the app
+            }
+          }
+        }
+
+      (Simplest alternative, skips Auth in STEP 1 — replace the write line with
+       `allow write: if true;`  Anyone on the internet could then write; fine
+       for a short internal event, your call.)
+
+  STEP 4 — Host the file for free (pick one)
+    • Netlify Drop  → https://app.netlify.com/drop  → drag THIS file in → done, you get a URL.
+    • Firebase Hosting → `npm i -g firebase-tools` → `firebase init hosting` → `firebase deploy`.
+    • GitHub Pages / Cloudflare Pages / Vercel → upload as index.html.
+
+  Share the URL with everyone to VIEW. Coordinators use the Coordinator tab +
+  their team passcode (BID-T1 … BID-T4). Admin reset passcode: BID-ADMIN.
+  Change any passcode in the PASSCODES / TEAMS section below.
+  ============================================================================
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>BidP Plant Tour — Live Tracker</title>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap">
+<style>
+/* Layout: sticky command-bar over a two-panel live board (station readiness + team tracker); coordinator & admin swap in. */
+:root{
+  --bg:#eef1f5; --surface:#ffffff; --surface-2:#f6f8fb; --line:#dbe1ea;
+  --fg:#16202e; --muted:#5d6b7e; --faint:#8a97a8;
+  --brand:#124a8d; --brand-2:#0e3d77;
+  --live:#d81f2a; --live-bg:#fdecec;
+  --next:#b26a00; --next-bg:#fdf3e2;
+  --done:#1f8f5f; --done-bg:#e8f6ee;
+  --idle:#8a97a8; --idle-bg:#eef1f5;
+  --shadow:0 1px 2px rgba(16,32,54,.06),0 8px 24px rgba(16,32,54,.06);
+  --radius:14px;
+  --f-head:"Space Grotesk",ui-sans-serif,system-ui,sans-serif;
+  --f-body:"Inter",ui-sans-serif,system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --bg:#0c111a; --surface:#141c28; --surface-2:#1a2432; --line:#273445;
+  --fg:#e7edf5; --muted:#9fb0c4; --faint:#6b7c92;
+  --brand:#4f93d8; --brand-2:#6aa6e4;
+  --live:#ff6a72; --live-bg:#3a1416;
+  --next:#f0b05a; --next-bg:#38260c;
+  --done:#56c98d; --done-bg:#0f2c1f;
+  --idle:#6b7c92; --idle-bg:#1a2432;
+  --shadow:0 1px 2px rgba(0,0,0,.3),0 10px 28px rgba(0,0,0,.35);
+  color-scheme:dark;
+}}
+:root[data-theme="dark"]{
+  --bg:#0c111a; --surface:#141c28; --surface-2:#1a2432; --line:#273445;
+  --fg:#e7edf5; --muted:#9fb0c4; --faint:#6b7c92;
+  --brand:#4f93d8; --brand-2:#6aa6e4;
+  --live:#ff6a72; --live-bg:#3a1416;
+  --next:#f0b05a; --next-bg:#38260c;
+  --done:#56c98d; --done-bg:#0f2c1f;
+  --idle:#6b7c92; --idle-bg:#1a2432;
+  --shadow:0 1px 2px rgba(0,0,0,.3),0 10px 28px rgba(0,0,0,.35);
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+html,body{margin:0}
+img{max-width:100%}
+[hidden]{display:none!important}
+body{background:var(--bg);color:var(--fg);font-family:var(--f-body);line-height:1.5;
+  -webkit-font-smoothing:antialiased;font-size:15px;
+  padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset-top,0px);
+  background:var(--brand-2);z-index:30}
+h1,h2,h3{font-family:var(--f-head);margin:0;font-weight:600;letter-spacing:-.01em}
+.tnum{font-variant-numeric:tabular-nums}
+.wrap{max-width:1180px;margin:0 auto;
+  padding-left:max(16px,env(safe-area-inset-left,0px));
+  padding-right:max(16px,env(safe-area-inset-right,0px))}
+
+.topbar{position:sticky;top:env(safe-area-inset-top,0px);z-index:20;
+  background:linear-gradient(180deg,var(--brand-2),var(--brand));
+  color:#eaf2fc;box-shadow:0 2px 10px rgba(8,30,60,.25)}
+.topbar .wrap{display:flex;align-items:center;gap:14px;flex-wrap:wrap;padding-block:11px}
+.brandmark{display:flex;flex-direction:column;gap:1px;min-width:0}
+.brandmark .ey{font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:#a9c6ec;font-weight:600}
+.brandmark h1{font-size:17px;color:#fff;white-space:nowrap}
+.clock{margin-left:auto;display:flex;align-items:center;gap:9px;
+  background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.18);
+  padding:5px 11px;border-radius:999px;font-size:13px;font-weight:600}
+.clock .dot{width:7px;height:7px;border-radius:50%;background:#7ef0b0}
+.clock .dot.on{animation:pulse 2.2s infinite}
+@keyframes pulse{0%{box-shadow:0 0 0 0 rgba(126,240,176,.6)}70%{box-shadow:0 0 0 7px rgba(126,240,176,0)}100%{box-shadow:0 0 0 0 rgba(126,240,176,0)}}
+.clock .dot.off{background:#f0b05a}
+@media (prefers-reduced-motion:reduce){.clock .dot{animation:none}}
+.tabs{display:flex;gap:4px;background:rgba(255,255,255,.1);padding:4px;border-radius:999px;flex-wrap:wrap}
+.tabs button{appearance:none;border:0;background:transparent;color:#cfe0f5;font-family:var(--f-body);
+  font-weight:600;font-size:13px;padding:7px 15px;border-radius:999px;cursor:pointer;transition:.15s}
+.tabs button[aria-selected="true"]{background:#fff;color:var(--brand-2)}
+.tabs button:focus-visible{outline:2px solid #fff;outline-offset:2px}
+
+main{padding-block:20px 60px}
+.view{display:flex;flex-direction:column;gap:22px}
+.setupbar{background:var(--next-bg);color:var(--next);border:1px solid color-mix(in srgb,var(--next) 30%,transparent);
+  border-radius:12px;padding:12px 14px;font-size:13.5px;display:flex;gap:10px;align-items:flex-start}
+.setupbar b{color:var(--next)}
+
+.sec-h{display:flex;align-items:baseline;gap:10px;margin-bottom:12px;flex-wrap:wrap}
+.sec-h h2{font-size:15px}
+.sec-h .hint{font-size:12.5px;color:var(--muted)}
+.cols{display:grid;grid-template-columns:1.05fr .95fr;gap:22px;align-items:start}
+@media (max-width:860px){.cols{grid-template-columns:1fr}}
+
+.stations{display:flex;flex-direction:column;gap:10px}
+.st{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);
+  box-shadow:var(--shadow);padding:13px 14px;display:grid;grid-template-columns:auto 1fr auto;
+  gap:12px;align-items:center;border-left:4px solid var(--idle)}
+.st.live{border-left-color:var(--live)}
+.st.next{border-left-color:var(--next)}
+.st .code{font-family:var(--f-head);font-weight:700;font-size:15px;width:40px;height:40px;
+  display:grid;place-items:center;border-radius:10px;background:var(--surface-2);color:var(--brand);border:1px solid var(--line)}
+.st .meta{min-width:0}
+.st .nm{font-weight:600;font-size:14.5px}
+.st .sub{font-size:12px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.st .spk{font-size:11.5px;color:var(--faint);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.st .status{text-align:right;display:flex;flex-direction:column;gap:3px;align-items:flex-end}
+.pill{font-size:11px;font-weight:700;letter-spacing:.03em;padding:3px 9px;border-radius:999px;
+  display:inline-flex;align-items:center;gap:5px;white-space:nowrap;text-transform:uppercase}
+.pill.live{background:var(--live-bg);color:var(--live)}
+.pill.next{background:var(--next-bg);color:var(--next)}
+.pill.done{background:var(--done-bg);color:var(--done)}
+.pill.idle{background:var(--idle-bg);color:var(--idle)}
+.pill .bd{width:7px;height:7px;border-radius:50%;background:currentColor}
+.pill.live .bd{animation:pulse2 1.4s infinite}
+@keyframes pulse2{0%,100%{opacity:1}50%{opacity:.3}}
+@media (prefers-reduced-motion:reduce){.pill.live .bd{animation:none}}
+.st .who{font-size:12px;color:var(--muted)}
+.st .who b{color:var(--fg)}
+
+.teams{display:flex;flex-direction:column;gap:12px}
+.team{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden}
+.team .thd{display:flex;align-items:center;gap:10px;padding:12px 14px 10px}
+.team .tg{width:34px;height:34px;border-radius:9px;display:grid;place-items:center;color:#fff;
+  font-family:var(--f-head);font-weight:700;font-size:14px;flex:none}
+.team .ti{min-width:0;flex:1}
+.team .tn{font-weight:600;font-size:14.5px}
+.team .tl{font-size:11.5px;color:var(--faint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.team .tnow{padding:0 14px 12px;display:flex;flex-direction:column;gap:8px}
+.nowrow{display:flex;align-items:center;gap:10px;background:var(--surface-2);border:1px solid var(--line);border-radius:10px;padding:9px 11px}
+.nowrow .ic{font-size:18px;flex:none;width:22px;text-align:center}
+.nowrow .lb{min-width:0;flex:1}
+.nowrow .k{font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--faint);font-weight:600}
+.nowrow .v{font-size:13.5px;font-weight:600;line-height:1.3}
+.nowrow .tm{font-size:12px;color:var(--muted)}
+.nextline{display:flex;align-items:center;gap:7px;font-size:12.5px;color:var(--muted);padding-left:2px}
+.nextline .ar{color:var(--next);font-weight:700}
+.prog{height:5px;background:var(--idle-bg);border-radius:999px;overflow:hidden;margin-top:2px}
+.prog i{display:block;height:100%;background:linear-gradient(90deg,var(--brand),var(--brand-2));border-radius:999px;transition:width .4s}
+.progt{font-size:11px;color:var(--faint);display:flex;justify-content:space-between;margin-top:5px}
+
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);padding:18px}
+.pick{display:grid;grid-template-columns:repeat(2,1fr);gap:11px;margin-top:4px}
+@media (min-width:620px){.pick{grid-template-columns:repeat(4,1fr)}}
+.pickbtn{appearance:none;cursor:pointer;text-align:left;background:var(--surface-2);border:1px solid var(--line);
+  border-radius:12px;padding:13px;display:flex;flex-direction:column;gap:7px;transition:.15s}
+.pickbtn:hover{border-color:var(--brand);transform:translateY(-1px)}
+.pickbtn:focus-visible{outline:2px solid var(--brand);outline-offset:2px}
+.pickbtn .tg{width:30px;height:30px;border-radius:8px;display:grid;place-items:center;color:#fff;font-family:var(--f-head);font-weight:700;font-size:13px}
+.pickbtn .pn{font-weight:600;font-size:14px}
+.pickbtn .pl{font-size:11px;color:var(--faint)}
+.lockbox{max-width:360px;margin-top:14px;display:flex;flex-direction:column;gap:10px}
+.field{display:flex;flex-direction:column;gap:6px}
+.field label{font-size:12px;font-weight:600;color:var(--muted)}
+input[type=text],input[type=password]{font-family:var(--f-body);font-size:15px;padding:10px 12px;
+  border:1px solid var(--line);border-radius:10px;background:var(--surface-2);color:var(--fg)}
+input:focus{outline:2px solid var(--brand);outline-offset:1px;border-color:var(--brand)}
+.btn{appearance:none;cursor:pointer;font-family:var(--f-body);font-weight:600;font-size:14px;padding:11px 16px;
+  border-radius:10px;border:1px solid transparent;transition:.15s;display:inline-flex;align-items:center;justify-content:center;gap:8px}
+.btn:focus-visible{outline:2px solid var(--brand);outline-offset:2px}
+.btn.primary{background:var(--brand);color:#fff}.btn.primary:hover{background:var(--brand-2)}
+.btn.go{background:var(--done);color:#fff}.btn.go:hover{filter:brightness(1.06)}
+.btn.live{background:var(--live);color:#fff}.btn.live:hover{filter:brightness(1.06)}
+.btn.ghost{background:transparent;border-color:var(--line);color:var(--muted)}.btn.ghost:hover{border-color:var(--brand);color:var(--brand)}
+.btn.block{width:100%}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+.banner{border-radius:10px;padding:11px 13px;font-size:13px;display:flex;gap:9px;align-items:flex-start}
+.banner.warn{background:var(--next-bg);color:var(--next);border:1px solid color-mix(in srgb,var(--next) 30%,transparent)}
+.banner.info{background:var(--surface-2);color:var(--muted);border:1px solid var(--line)}
+.coord-head{display:flex;align-items:center;gap:11px;margin-bottom:16px;flex-wrap:wrap}
+.coord-head .tg{width:38px;height:38px;border-radius:10px;display:grid;place-items:center;color:#fff;font-family:var(--f-head);font-weight:700}
+.coord-head .ci{flex:1;min-width:0}
+.coord-head .cn{font-weight:700;font-size:16px;font-family:var(--f-head)}
+.coord-head .cl{font-size:12px;color:var(--faint)}
+.current-card{background:var(--surface-2);border:1px solid var(--line);border-radius:12px;padding:15px;margin-bottom:14px}
+.current-card .ck{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--faint);font-weight:600}
+.current-card .cv{font-size:19px;font-weight:700;font-family:var(--f-head);margin-top:3px;display:flex;align-items:center;gap:9px;flex-wrap:wrap}
+.current-card .ct{font-size:13px;color:var(--muted);margin-top:4px}
+.actions{display:flex;gap:10px;margin-top:14px;flex-wrap:wrap}
+.actions .btn{flex:1;min-width:140px}
+.timeline{display:flex;flex-direction:column;gap:0;margin-top:18px}
+.tlrow{display:grid;grid-template-columns:62px 24px 1fr;gap:8px;align-items:start;padding:7px 0}
+.tlrow .tlt{font-size:11.5px;color:var(--faint);text-align:right;padding-top:2px}
+.tlrow .tld{display:flex;flex-direction:column;align-items:center;align-self:stretch}
+.tlrow .nodewrap{display:flex;flex-direction:column;align-items:center;height:100%}
+.node{width:14px;height:14px;border-radius:50%;border:2px solid var(--idle);background:var(--surface);flex:none;margin-top:3px}
+.tlrow.done .node{background:var(--done);border-color:var(--done)}
+.tlrow.cur .node{background:var(--brand);border-color:var(--brand);box-shadow:0 0 0 4px color-mix(in srgb,var(--brand) 25%,transparent)}
+.rail{width:2px;flex:1;background:var(--line);margin-top:2px}
+.tlrow.done .rail{background:var(--done)}
+.tlrow .tlc{font-size:13.5px;padding-top:1px}
+.tlrow .tlc .kd{font-size:11px;color:var(--faint);text-transform:uppercase;letter-spacing:.05em}
+.tlrow.cur .tlc{font-weight:600}
+.tlrow.done .tlc{color:var(--muted)}
+.tag{font-size:10px;font-weight:700;padding:1px 7px;border-radius:999px;background:var(--brand);color:#fff;letter-spacing:.03em;text-transform:uppercase}
+.tag.live{background:var(--live)}
+.about{display:flex;flex-direction:column;gap:14px}
+.about .panel h2{font-size:15px;margin-bottom:8px}
+.about p{margin:0 0 9px;font-size:13.5px;color:var(--muted)}
+.about code{background:var(--surface-2);border:1px solid var(--line);padding:1px 6px;border-radius:6px;font-size:12.5px;color:var(--fg);font-family:ui-monospace,Menlo,monospace}
+.legend{display:flex;gap:14px;flex-wrap:wrap;font-size:12px;color:var(--muted);margin-top:4px}
+.legend span{display:inline-flex;align-items:center;gap:6px}
+.sw{width:11px;height:11px;border-radius:3px}
+.foot{text-align:center;font-size:11.5px;color:var(--faint);padding-top:8px}
+.foot b{color:var(--muted)}
+.offline{font-size:11.5px;color:var(--next);margin-left:4px}
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="wrap">
+    <div class="brandmark">
+      <div class="ey">VCC 2026 · BidP Plant Tour · 17 Nov</div>
+      <h1>Live Route Tracker</h1>
+    </div>
+    <div class="clock"><span class="dot off" id="condot"></span><span id="clock" class="tnum">--:--</span><span style="color:#a9c6ec;font-weight:500">IST</span></div>
+    <div class="tabs" role="tablist" style="width:100%">
+      <button role="tab" aria-selected="true" data-view="board">Live Board</button>
+      <button role="tab" aria-selected="false" data-view="coord">Coordinator</button>
+      <button role="tab" aria-selected="false" data-view="about">Setup &amp; Admin</button>
+    </div>
+  </div>
+</div>
+
+<main class="wrap">
+  <section id="view-board" class="view">
+    <div id="setupbar" class="setupbar" hidden></div>
+    <div class="cols">
+      <div>
+        <div class="sec-h"><h2>Station readiness</h2><span class="hint">who is presenting now · who to get ready</span></div>
+        <div id="stations" class="stations"></div>
+      </div>
+      <div>
+        <div class="sec-h"><h2>Team tracker</h2><span class="hint">4 teams · 25 members each</span></div>
+        <div id="teams" class="teams"></div>
+      </div>
+    </div>
+    <div class="foot" id="boardfoot"></div>
+  </section>
+
+  <section id="view-coord" class="view" hidden></section>
+
+  <section id="view-about" class="view" hidden>
+    <div class="about">
+      <div class="panel">
+        <h2>What this is</h2>
+        <p>A live board for the BidP plant-tour conference. Each group's coordinator advances their team through its route by tapping one button as each presentation finishes. Everyone watching the board sees where every team is — so the next presenters get ready in time. No GPS, no app install, no login for coordinators.</p>
+        <div class="legend">
+          <span><i class="sw" style="background:var(--live)"></i>Presenting now</span>
+          <span><i class="sw" style="background:var(--next)"></i>Up next — get ready</span>
+          <span><i class="sw" style="background:var(--done)"></i>Done</span>
+          <span><i class="sw" style="background:var(--idle)"></i>Idle</span>
+        </div>
+      </div>
+      <div class="panel">
+        <h2>Connection</h2>
+        <div id="constatus" class="banner info"></div>
+      </div>
+      <div class="panel">
+        <h2>Reset the event</h2>
+        <p>Sets all four teams back to the start. Use after a rehearsal/demo. Requires the admin passcode.</p>
+        <div id="adminbox"></div>
+      </div>
+      <div class="foot">Built from <b>Route_Map_10.11.2026</b> · self-hosted · Firebase Firestore</div>
+    </div>
+  </section>
+</main>
+
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+import { getFirestore, collection, doc, setDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+
+/* ====================== PASTE YOUR FIREBASE CONFIG HERE ====================== */
+const FIREBASE_CONFIG = {
+  apiKey: "PASTE_API_KEY",
+  authDomain: "PASTE_PROJECT.firebaseapp.com",
+  projectId: "PASTE_PROJECT_ID",
+  storageBucket: "PASTE_PROJECT.appspot.com",
+  messagingSenderId: "PASTE_SENDER_ID",
+  appId: "PASTE_APP_ID"
+};
+const ADMIN_PASS = "BID-ADMIN";
+/* ============================================================================ */
+
+/* ---- STATIC PLAN (from Route_Map_10.11.2026) ---- */
+const COLORS={t1:"#124a8d",t2:"#1f8f5f",t3:"#b26a00",t4:"#7a3ea8"};
+const STATIONS={
+  P1:{nm:"Technology",area:"Hanger 102",lead:"Rajesh K S",spk:"Rohit Sharma — B&R Automation (ABB), Ati Motors, Mechmind"},
+  P2:{nm:"A-Pump & Elements",area:"Hanger 102",lead:"Pramod K G",spk:"Lakshminarayanan S, Vikas Bhat — Muthuraj, Srikanth KS, Karthik, Maji Subadip"},
+  P3:{nm:"Sustainability",area:"Chip & Coolant",lead:"Vijay Kumar",spk:"Vijay Kumar — Lingaraju KY, Pol Pandurang Vishnu, Suneel B"},
+  P4:{nm:"LSFmh & HFR",area:"Hanger 101",lead:"Kumar S",spk:"Ankit, Manjunath S — Nayak Sunil, Theertha Narahari"},
+  P5:{nm:"Logistics",area:"LOG area",lead:"Niranjan S",spk:"Niranjan S — Prahaladharsha Y, Krishnan Rohith, Bangera Thejas Harish"}
+};
+const K={bus:"🚌",walk:"🚶",pres:"🎤",move:"↪️",brk:"☕",exit:"🏁"};
+const KN={bus:"Bus",walk:"Walk",pres:"Presentation",move:"Move",brk:"Coffee break",exit:"Depart"};
+function P(code,t){return{k:"pres",s:code,t};}
+const TEAMS={
+ t1:{nm:"Team 1",lead:"Srikant · Shriram",pass:"BID-T1",stops:[
+   {k:"bus",t:"8:58",d:"Bus arrives — Chip & Coolant area"},
+   {k:"walk",t:"8:58–8:59",d:"Walk to Chip & Coolant area"},
+   P("P3","9:00–9:40"),
+   {k:"move",t:"9:40–9:44",d:"Move to Plant 101 rear → HFR VS"},
+   P("P4","9:45–10:25"),
+   {k:"move",t:"10:25–10:30",d:"Bus to Plant 102 Hanger front entry"},
+   {k:"brk",t:"10:30–10:44",d:"Coffee break — Plant 102, Technology area"},
+   P("P1","10:45–11:25"),
+   {k:"move",t:"11:25–11:30",d:"Walk to A-Pump & Elements VS"},
+   P("P2","11:30–12:10"),
+   {k:"exit",t:"12:10–12:15",d:"Board bus at Plant 102 rear → People Forum"}]},
+ t2:{nm:"Team 2",lead:"Rajesh · Gali Shravan",pass:"BID-T2",stops:[
+   {k:"bus",t:"8:58",d:"Bus arrives — Plant 102 Hanger rear entry"},
+   {k:"walk",t:"8:58–8:59",d:"Walk to A-Pump & Elements area"},
+   P("P2","9:00–9:40"),
+   {k:"move",t:"9:40–9:44",d:"Move to Chip & Coolant area"},
+   P("P3","9:45–10:25"),
+   {k:"move",t:"10:25–10:30",d:"Move to LOG via Plant 101 rear entry"},
+   {k:"brk",t:"10:30–10:44",d:"Coffee break — LOG area"},
+   P("P5","10:45–11:25"),
+   {k:"move",t:"11:25–11:30",d:"Move to Plant 102 Hanger"},
+   P("P1","11:30–12:10"),
+   {k:"exit",t:"12:10–12:15",d:"Board bus at Plant 102 front → People Forum"}]},
+ t3:{nm:"Team 3",lead:"Praveen K S · Richard Pradeep",pass:"BID-T3",stops:[
+   {k:"bus",t:"8:58",d:"Bus arrives — Plant 102 Hanger front entry"},
+   {k:"walk",t:"8:58–8:59",d:"Walk to P1 area"},
+   P("P1","9:00–9:40"),
+   {k:"move",t:"9:40–9:44",d:"Move to LOG area"},
+   P("P5","9:45–10:25"),
+   {k:"brk",t:"10:30–10:42",d:"Coffee break — LOG area"},
+   {k:"move",t:"10:42–10:45",d:"Move to Plant 101 Hanger — HFR VS"},
+   P("P4","10:45–11:25"),
+   {k:"move",t:"11:25–11:30",d:"Move to Chip & Coolant area"},
+   P("P3","11:30–12:10"),
+   {k:"exit",t:"12:10–12:15",d:"Board bus at Chip & Coolant → People Forum"}]},
+ t4:{nm:"Team 4",lead:"Chandra Mohan · Sumit",pass:"BID-T4",stops:[
+   {k:"bus",t:"8:58",d:"Bus arrives — Plant 101 Hanger, near Board room"},
+   {k:"walk",t:"8:58–8:59",d:"Walk to HFR VS"},
+   P("P4","9:00–9:40"),
+   {k:"move",t:"9:40–9:44",d:"Move to Plant 102 Hanger front entry"},
+   P("P1","9:45–10:25"),
+   {k:"brk",t:"10:30–10:42",d:"Coffee break — Plant 102, Technology area"},
+   {k:"move",t:"10:42–10:45",d:"Move to A-Pump & Elements VS"},
+   P("P2","10:45–11:25"),
+   {k:"move",t:"11:25–11:30",d:"Move to LOG area"},
+   P("P5","11:30–12:10"),
+   {k:"exit",t:"12:10–12:15",d:"Exit Plant 101 front → People Forum"}]}
+};
+const TIDS=["t1","t2","t3","t4"];
+function stopLabel(st){return st.k==="pres"?(st.s+" · "+STATIONS[st.s].nm):st.d;}
+function parseMin(t){const m=String(t).match(/(\d{1,2}):(\d{2})/);if(!m)return 9999;return (+m[1])*60+ +m[2];}
+
+/* ---- LIVE STATE ---- */
+const progress={};TIDS.forEach(t=>progress[t]={idx:0,presenting:false,startedAt:null,updatedAt:0});
+let DB=null,canWrite=false,dbReady=false,configured=false,stale=false,staleTimer=null,writeErr=false;
+
+function fmtClock(ms){try{return new Date(ms).toLocaleTimeString("en-GB",{timeZone:"Asia/Kolkata",hour:"2-digit",minute:"2-digit"});}catch(e){return "--:--";}}
+function tickClock(){const el=document.getElementById("clock");if(el)el.textContent=fmtClock(Date.now());}
+tickClock();setInterval(tickClock,15000);
+
+function teamView(tid){
+  const T=TEAMS[tid],pg=progress[tid],idx=Math.min(pg.idx,T.stops.length);
+  const finished=idx>=T.stops.length;const cur=finished?null:T.stops[idx];
+  let nextPres=null,nextPresIdx=-1;
+  for(let i=idx;i<T.stops.length;i++){if(T.stops[i].k==="pres"){nextPres=T.stops[i];nextPresIdx=i;break;}}
+  const atStation=cur&&cur.k==="pres";
+  return {T,pg,idx,finished,cur,nextPres,nextPresIdx,atStation,liveHere:atStation&&pg.presenting};
+}
+function stationModel(){
+  const m={};Object.keys(STATIONS).forEach(s=>m[s]={live:null,arriving:null,upcoming:[]});
+  TIDS.forEach(tid=>{const v=teamView(tid);if(v.finished)return;
+    if(v.atStation){if(v.pg.presenting)m[v.cur.s].live={tid,since:v.pg.startedAt,sched:v.cur.t};
+      else m[v.cur.s].arriving={tid,sched:v.cur.t};}
+    else if(v.nextPres)m[v.nextPres.s].upcoming.push({tid,sched:v.nextPres.t,mins:parseMin(v.nextPres.t)});});
+  Object.keys(m).forEach(s=>m[s].upcoming.sort((a,b)=>a.mins-b.mins));return m;
+}
+function teamChip(tid,sz){return `<span class="tg" style="background:${COLORS[tid]};${sz?`width:${sz}px;height:${sz}px;font-size:12px;`:""}">${tid.toUpperCase().replace("T","")}</span>`;}
+
+function renderStations(){
+  const m=stationModel(),host=document.getElementById("stations");if(!host)return;
+  host.innerHTML=Object.keys(STATIONS).map(s=>{
+    const S=STATIONS[s],st=m[s];let cls="",pill="",who="";
+    if(st.live){cls="live";pill=`<span class="pill live"><span class="bd"></span>Presenting</span>`;
+      who=`<span class="who">${teamChip(st.live.tid,20)} <b>${TEAMS[st.live.tid].nm}</b>${st.live.since?` · since ${fmtClock(st.live.since)}`:""}</span>`;}
+    else if(st.arriving){cls="next";pill=`<span class="pill next"><span class="bd"></span>Arrived</span>`;
+      who=`<span class="who">${teamChip(st.arriving.tid,20)} <b>${TEAMS[st.arriving.tid].nm}</b> · starting soon</span>`;}
+    else if(st.upcoming.length){cls="next";const u=st.upcoming[0];pill=`<span class="pill next">▲ Up next</span>`;
+      who=`<span class="who">${teamChip(u.tid,20)} <b>${TEAMS[u.tid].nm}</b> · sched ${u.sched}</span>`;}
+    else{pill=`<span class="pill idle">Idle</span>`;who=`<span class="who">—</span>`;}
+    return `<div class="st ${cls}"><div class="code">${s}</div>
+      <div class="meta"><div class="nm">${S.nm}</div><div class="sub">${S.area} · lead ${S.lead}</div><div class="spk">${S.spk}</div></div>
+      <div class="status">${pill}${who}</div></div>`;
+  }).join("");
+}
+function renderTeams(){
+  const host=document.getElementById("teams");if(!host)return;
+  host.innerHTML=TIDS.map(tid=>{const v=teamView(tid),T=TEAMS[tid];
+    const pct=Math.round((v.idx/T.stops.length)*100);let nowIc,nowK,nowV,nowT,tag="";
+    if(v.finished){nowIc="🏁";nowK="Status";nowV="Route complete";nowT="Returned to People Forum";}
+    else{nowIc=K[v.cur.k];nowK=KN[v.cur.k];nowV=stopLabel(v.cur);nowT=v.cur.t;
+      if(v.liveHere)tag=`<span class="tag live">● Live</span>`;else if(v.atStation)tag=`<span class="tag">At station</span>`;}
+    let nextHtml="";
+    if(!v.finished&&v.nextPres&&!(v.atStation&&v.nextPresIdx===v.idx))
+      nextHtml=`<div class="nextline"><span class="ar">▲ Next</span> ${v.nextPres.s} · ${STATIONS[v.nextPres.s].nm} · ${STATIONS[v.nextPres.s].area} · sched ${v.nextPres.t}</div>`;
+    return `<div class="team"><div class="thd">${teamChip(tid)}<div class="ti"><div class="tn">${T.nm}</div><div class="tl">${T.lead}</div></div></div>
+      <div class="tnow"><div class="nowrow"><div class="ic">${nowIc}</div>
+        <div class="lb"><div class="k">${nowK}</div><div class="v">${nowV} ${tag}</div><div class="tm">${nowT}</div></div></div>
+        ${nextHtml}
+        <div><div class="prog"><i style="width:${pct}%"></i></div>
+          <div class="progt"><span>${v.finished?T.stops.length:v.idx} / ${T.stops.length} steps</span><span>${v.finished?"Done":pct+"%"}</span></div></div>
+      </div></div>`;
+  }).join("");
+}
+function renderBoard(){
+  renderStations();renderTeams();
+  const sb=document.getElementById("setupbar");
+  if(sb){if(!configured){sb.hidden=false;sb.innerHTML="⚙ <div><b>Not connected yet.</b> This is a local preview — taps won't sync between devices until you paste your Firebase config into the file (see the setup notes at the top of the HTML).</div>";}else sb.hidden=true;}
+  const f=document.getElementById("boardfoot");
+  if(f)f.innerHTML=`${!configured?"Local preview only":(dbReady?"<b>Live</b> — updates the moment a coordinator taps a button.":"Connecting to live data…")}${stale?`<span class="offline">· reconnecting, times may be behind</span>`:""}`;
+  const d=document.getElementById("condot");
+  if(d){d.className="dot "+((configured&&dbReady&&!stale)?"on":"off");}
+}
+
+/* ---- COORDINATOR ---- */
+const LS={get(k){try{return localStorage.getItem(k)}catch(e){return null}},set(k,v){try{localStorage.setItem(k,v)}catch(e){}},del(k){try{localStorage.removeItem(k)}catch(e){}}};
+function unlockedTeam(){return LS.get("bidp_team");}
+function renderCoord(){
+  const host=document.getElementById("view-coord");if(!host)return;
+  const tid=unlockedTeam();
+  if(!tid||!TEAMS[tid]){host.innerHTML=coordPicker();bindPicker();return;}
+  const v=teamView(tid),T=TEAMS[tid];
+  let permBanner="";
+  if(!configured)permBanner=`<div class="banner warn">⚙ <div>Not connected to Firebase yet — taps stay on this device only. Paste your config into the HTML to go live.</div></div>`;
+  else if(writeErr)permBanner=`<div class="banner warn">⚠ <div>Couldn't save the last update. Check your Firestore security rules (writes must be allowed). The board may be out of date.</div></div>`;
+  else if(!dbReady)permBanner=`<div class="banner info">⏳ Connecting…</div>`;
+  let cur="";
+  if(v.finished)cur=`<div class="current-card"><div class="ck">Route complete</div><div class="cv">🏁 All presentations done</div><div class="ct">Team returned to People Forum.</div></div>`;
+  else{const st=v.cur;const tagc=v.liveHere?`<span class="tag live">● Live now</span>`:(v.atStation?`<span class="tag">At station</span>`:"");
+    cur=`<div class="current-card"><div class="ck">Current — step ${v.idx+1} of ${T.stops.length} · ${st.t}</div>
+      <div class="cv">${K[st.k]} ${stopLabel(st)} ${tagc}</div>
+      <div class="ct">${st.k==="pres"?("Area: "+STATIONS[st.s].area+" · Speaker: "+STATIONS[st.s].spk):st.d}</div></div>`;}
+  let actions="";
+  if(!v.finished){
+    if(v.cur.k==="pres"&&!v.pg.presenting)actions=`<button class="btn live" data-act="start">▶ Start ${v.cur.s} presentation</button>`;
+    else if(v.cur.k==="pres"&&v.pg.presenting)actions=`<button class="btn go" data-act="complete">✓ Complete ${v.cur.s} &amp; advance</button>`;
+    else actions=`<button class="btn go" data-act="complete">✓ Done — go to next</button>`;
+  }
+  const undo=v.idx>0?`<button class="btn ghost" data-act="undo">↶ Undo</button>`:"";
+  host.innerHTML=`<div class="panel">
+    <div class="coord-head">${teamChip(tid)}<div class="ci"><div class="cn">${T.nm}</div><div class="cl">${T.lead} · route via ${T.stops.filter(s=>s.k==="pres").map(s=>s.s).join(" → ")}</div></div>
+      <button class="btn ghost" data-act="switch">Switch team</button></div>
+    ${permBanner}${cur}
+    <div class="actions">${actions}${undo}</div>
+    <div class="timeline">${T.stops.map((st,i)=>{
+      const cls=i<v.idx?"done":(i===v.idx&&!v.finished?"cur":"");const last=i===T.stops.length-1;const live=(i===v.idx&&v.liveHere);
+      return `<div class="tlrow ${cls}"><div class="tlt tnum">${st.t}</div>
+        <div class="tld"><div class="nodewrap"><div class="node"></div>${last?"":`<div class="rail"></div>`}</div></div>
+        <div class="tlc"><span class="kd">${KN[st.k]}</span><br>${stopLabel(st)} ${live?'<span class="tag live">live</span>':""}</div></div>`;
+    }).join("")}</div></div>`;
+  host.querySelectorAll("[data-act]").forEach(b=>b.addEventListener("click",()=>coordAction(b.dataset.act,tid)));
+}
+function coordPicker(){
+  return `<div class="panel"><div class="sec-h"><h2>Coordinator sign-in</h2><span class="hint">pick your team, then enter its passcode</span></div>
+    <div class="pick">${TIDS.map(tid=>{const T=TEAMS[tid];
+      return `<button class="pickbtn" data-pick="${tid}">${teamChip(tid,30)}<div class="pn">${T.nm}</div><div class="pl">${T.lead}</div></button>`;}).join("")}</div>
+    <div id="lockarea"></div></div>`;
+}
+function bindPicker(){
+  const host=document.getElementById("view-coord");
+  host.querySelectorAll("[data-pick]").forEach(b=>b.addEventListener("click",()=>{
+    const tid=b.dataset.pick;const la=document.getElementById("lockarea");
+    la.innerHTML=`<div class="lockbox"><div class="field"><label>Passcode for ${TEAMS[tid].nm}</label>
+      <input type="text" id="pc" autocomplete="off" placeholder="BID-T${tid.slice(1)}"></div>
+      <div id="pcerr" class="banner warn" hidden></div>
+      <button class="btn primary block" id="pcgo">Unlock ${TEAMS[tid].nm} controls</button></div>`;
+    const go=()=>{const val=(document.getElementById("pc").value||"").trim();
+      if(val.toUpperCase()===TEAMS[tid].pass.toUpperCase()){LS.set("bidp_team",tid);renderCoord();}
+      else{const e=document.getElementById("pcerr");e.hidden=false;e.textContent="That passcode doesn't match this team. Check with the organizer.";}};
+    document.getElementById("pcgo").addEventListener("click",go);
+    document.getElementById("pc").addEventListener("keydown",e=>{if(e.key==="Enter")go();});
+    document.getElementById("pc").focus();
+  }));
+}
+async function writeTeam(tid){
+  const nx=progress[tid];
+  if(!DB){return;}
+  try{await setDoc(doc(DB,"teams",tid),nx);writeErr=false;}
+  catch(e){console.warn("write failed",e);writeErr=true;renderCoord();}
+}
+async function coordAction(act,tid){
+  if(act==="switch"){LS.del("bidp_team");renderCoord();return;}
+  const T=TEAMS[tid],pg=progress[tid];let nx={...pg};
+  if(act==="start"){nx.presenting=true;nx.startedAt=Date.now();}
+  else if(act==="complete"){nx.idx=Math.min(pg.idx+1,T.stops.length);nx.presenting=false;nx.startedAt=null;}
+  else if(act==="undo"){nx.idx=Math.max(pg.idx-1,0);nx.presenting=false;nx.startedAt=null;}
+  nx.updatedAt=Date.now();progress[tid]=nx;renderAll();
+  await writeTeam(tid);
+}
+
+/* ---- ADMIN ---- */
+let resetArmed=false;
+function renderAbout(){
+  const c=document.getElementById("constatus");
+  if(c)c.innerHTML=!configured?"⚙ Not connected. Paste your Firebase config into the HTML, then re-host the file.":(dbReady?"✅ Connected to Firebase — live and syncing across all devices.":"⏳ Connecting to Firebase…");
+  const a=document.getElementById("adminbox");if(!a)return;
+  a.innerHTML=`<div class="lockbox" style="max-width:340px">
+    <div class="field"><label>Admin passcode</label><input type="password" id="apc" autocomplete="off" placeholder="admin passcode"></div>
+    <div class="actions"><button class="btn ${resetArmed?"live":"ghost"}" id="rst">${resetArmed?"⚠ Confirm — reset all teams":"Reset all teams to start"}</button>${resetArmed?`<button class="btn ghost" id="rstc">Cancel</button>`:""}</div>
+    <div id="aerr" class="banner warn" hidden></div></div>`;
+  const r=document.getElementById("rst");
+  r.addEventListener("click",()=>{
+    const val=(document.getElementById("apc").value||"").trim();
+    if(val.toUpperCase()!==ADMIN_PASS.toUpperCase()){const e=document.getElementById("aerr");e.hidden=false;e.textContent="Wrong admin passcode.";resetArmed=false;return;}
+    if(!resetArmed){resetArmed=true;renderAbout();const ap=document.getElementById("apc");if(ap)ap.value=val;}
+    else{doReset();resetArmed=false;renderAbout();}
+  });
+  const cc=document.getElementById("rstc");if(cc)cc.addEventListener("click",()=>{resetArmed=false;renderAbout();});
+}
+async function doReset(){
+  for(const tid of TIDS){const nx={idx:0,presenting:false,startedAt:null,updatedAt:Date.now()};progress[tid]=nx;
+    if(DB){try{await setDoc(doc(DB,"teams",tid),nx);}catch(e){console.warn(e);}}}
+  renderAll();
+}
+
+/* ---- GLUE ---- */
+function renderAll(){renderBoard();if(!document.getElementById("view-coord").hidden)renderCoord();if(!document.getElementById("view-about").hidden)renderAbout();}
+const VIEWS=["board","coord","about"];
+function showView(v){VIEWS.forEach(x=>{document.getElementById("view-"+x).hidden=(x!==v);});
+  document.querySelectorAll('.tabs button').forEach(b=>b.setAttribute("aria-selected",b.dataset.view===v));
+  if(location.hash.slice(1)!==v)history.replaceState(null,"","#"+v);
+  if(v==="coord")renderCoord();if(v==="about")renderAbout();if(v==="board")renderBoard();}
+document.querySelectorAll('.tabs button').forEach(b=>b.addEventListener("click",()=>showView(b.dataset.view)));
+window.addEventListener("hashchange",()=>{const v=location.hash.slice(1);if(VIEWS.includes(v))showView(v);});
+
+renderBoard();
+{const v=location.hash.slice(1);if(VIEWS.includes(v))showView(v);}
+
+/* ---- CONNECT FIREBASE ---- */
+(async()=>{
+  const raw=JSON.stringify(FIREBASE_CONFIG);
+  configured=!/PASTE_/.test(raw);
+  if(!configured){dbReady=true;renderAll();return;}
+  try{
+    const app=initializeApp(FIREBASE_CONFIG);
+    DB=getFirestore(app);
+    try{await signInAnonymously(getAuth(app));}catch(e){console.warn("anon auth unavailable (ok if using open write rules):",e&&e.code);}
+    canWrite=true;
+    staleTimer=setTimeout(()=>{stale=true;renderBoard();},10000);
+    onSnapshot(collection(DB,"teams"),snap=>{
+      stale=false;if(staleTimer){clearTimeout(staleTimer);staleTimer=null;}
+      dbReady=true;
+      snap.forEach(d=>{const val=d.data()||{};const tid=d.id;if(progress[tid])
+        progress[tid]={idx:+val.idx||0,presenting:!!val.presenting,startedAt:val.startedAt||null,updatedAt:val.updatedAt||0};});
+      renderAll();
+    },err=>{console.warn("snapshot error",err);dbReady=true;stale=false;renderAll();});
+  }catch(e){console.error("Firebase init failed",e);dbReady=true;renderAll();}
+  renderAll();
+})();
+</script>
+</body>
+</html>
