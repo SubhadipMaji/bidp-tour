@@ -249,6 +249,27 @@ input:focus{outline:2px solid var(--brand);outline-offset:1px;border-color:var(-
 .foot{text-align:center;font-size:11.5px;color:var(--faint);padding-top:8px}
 .foot b{color:var(--muted)}
 .offline{font-size:11.5px;color:var(--next);margin-left:4px}
+.vchip{font-size:11px;font-weight:700;padding:2px 8px;border-radius:999px;display:inline-flex;align-items:center;gap:4px;white-space:nowrap}
+.v-early{background:var(--done-bg);color:var(--done)}
+.v-warn{background:var(--next-bg);color:var(--next)}
+.v-late{background:var(--live-bg);color:var(--live)}
+.v-idle{background:var(--idle-bg);color:var(--idle)}
+.team .thd .vwrap{margin-left:auto;flex:none}
+.actual{font-size:11px;color:var(--faint);margin-top:3px}
+.actual b{color:var(--muted);font-weight:600}
+.dlt{font-weight:700}
+.dlt.e{color:var(--done)}.dlt.w{color:var(--next)}.dlt.l{color:var(--live)}
+.ttbl-wrap{overflow-x:auto;border:1px solid var(--line);border-radius:12px;background:var(--surface);box-shadow:var(--shadow)}
+.ttbl{border-collapse:collapse;width:100%;min-width:560px;font-size:12.5px}
+.ttbl th,.ttbl td{padding:7px 10px;text-align:left;border-bottom:1px solid var(--line);white-space:nowrap}
+.ttbl thead th{background:var(--surface-2);font-family:var(--f-head);font-weight:600;font-size:11px;letter-spacing:.03em;text-transform:uppercase;color:var(--muted)}
+.ttbl td.num{font-variant-numeric:tabular-nums}
+.ttbl tr.cur td{background:color-mix(in srgb,var(--brand) 9%,transparent);font-weight:600}
+.ttbl tr.done td{color:var(--muted)}
+.ttbl tbody tr:last-child td{border-bottom:0}
+.tt-team-h{display:flex;align-items:center;gap:9px;margin:2px 0 9px}
+.tt-team-h .tg{width:28px;height:28px;border-radius:7px;display:grid;place-items:center;color:#fff;font-family:var(--f-head);font-weight:700;font-size:12px;flex:none}
+.tt-block{display:flex;flex-direction:column;gap:7px;margin-bottom:22px}
 </style>
 </head>
 <body>
@@ -263,6 +284,7 @@ input:focus{outline:2px solid var(--brand);outline-offset:1px;border-color:var(-
     <div class="tabs" role="tablist" style="width:100%">
       <button role="tab" aria-selected="true" data-view="board">Live Board</button>
       <button role="tab" aria-selected="false" data-view="coord">Coordinator</button>
+      <button role="tab" aria-selected="false" data-view="timings">Timings</button>
       <button role="tab" aria-selected="false" data-view="about">Setup &amp; Admin</button>
     </div>
   </div>
@@ -285,6 +307,8 @@ input:focus{outline:2px solid var(--brand);outline-offset:1px;border-color:var(-
   </section>
 
   <section id="view-coord" class="view" hidden></section>
+
+  <section id="view-timings" class="view" hidden></section>
 
   <section id="view-about" class="view" hidden>
     <div class="about">
@@ -395,9 +419,24 @@ const TEAMS={
 const TIDS=["t1","t2","t3","t4"];
 function stopLabel(st){return st.k==="pres"?(st.s+" · "+STATIONS[st.s].nm):st.d;}
 function parseMin(t){const m=String(t).match(/(\d{1,2}):(\d{2})/);if(!m)return 9999;return (+m[1])*60+ +m[2];}
+function schedBounds(st){const g=String(st.t).match(/(\d{1,2}):(\d{2})/g)||[];const tm=x=>{const a=x.split(":");return (+a[0])*60+(+a[1]);};const s=g.length?tm(g[0]):9999;return {s,e:g.length>1?tm(g[1]):s};}
+function istMin(ms){if(!ms)return null;try{const p=new Date(ms).toLocaleTimeString("en-GB",{timeZone:"Asia/Kolkata",hour:"2-digit",minute:"2-digit"});const a=p.split(":");return (+a[0])*60+(+a[1]);}catch(e){return null;}}
+function fmtDelta(m){if(m===null||m===undefined)return "—";if(m===0)return "on time";return m<0?`${-m} min early`:`${m} min late`;}
+function deltaCls(m){if(m===null||m===undefined)return "v-idle";return m<=0?"v-early":(m<=5?"v-warn":"v-late");}
+function teamDelay(tid){
+  const T=TEAMS[tid],pg=progress[tid],acts=pg.acts||{},n=T.stops.length;
+  const anyActual=Object.keys(acts).some(k=>acts[k]&&(acts[k].s||acts[k].e));
+  if(!anyActual)return {state:"pending",delta:null};
+  if(pg.idx>=n){const last=n-1;const a=istMin(acts[last]&&acts[last].e);return {state:"done",delta:a===null?null:a-schedBounds(T.stops[last]).e};}
+  const i=pg.idx;let a=istMin(acts[i]&&acts[i].s),sched=schedBounds(T.stops[i]).s;
+  if(a===null&&i>0){a=istMin(acts[i-1]&&acts[i-1].e);sched=schedBounds(T.stops[i-1]).e;}
+  if(a===null)return {state:"pending",delta:null};
+  return {state:"running",delta:a-sched};
+}
+function delayChip(tid){const d=teamDelay(tid);if(d.state==="pending")return `<span class="vchip v-idle">⏱ not started</span>`;return `<span class="vchip ${deltaCls(d.delta)}">⏱ ${fmtDelta(d.delta)}</span>`;}
 
 /* ---- LIVE STATE ---- */
-const progress={};TIDS.forEach(t=>progress[t]={idx:0,presenting:false,startedAt:null,updatedAt:0});
+const progress={};TIDS.forEach(t=>progress[t]={idx:0,presenting:false,startedAt:null,updatedAt:0,acts:{}});
 let DB=null,canWrite=false,dbReady=false,configured=false,stale=false,staleTimer=null,writeErr=false;
 
 function fmtClock(ms){try{return new Date(ms).toLocaleTimeString("en-GB",{timeZone:"Asia/Kolkata",hour:"2-digit",minute:"2-digit"});}catch(e){return "--:--";}}
@@ -448,9 +487,11 @@ function renderTeams(){
     let nextHtml="";
     if(!v.finished&&v.nextPres&&!(v.atStation&&v.nextPresIdx===v.idx))
       nextHtml=`<div class="nextline"><span class="ar">▲ Next</span> ${v.nextPres.s} · ${STATIONS[v.nextPres.s].nm} · ${STATIONS[v.nextPres.s].area} · sched ${v.nextPres.t}</div>`;
-    return `<div class="team"><div class="thd">${teamChip(tid)}<div class="ti"><div class="tn">${T.nm}</div><div class="tl">${T.lead}</div></div></div>
+    const ca=(v.pg.acts||{})[v.idx]||{};
+    const actHtml=(!v.finished&&(ca.s||ca.e))?`<div class="actual">actual <b>${ca.s?fmtClock(ca.s):"—"}</b>${ca.e?` → <b>${fmtClock(ca.e)}</b>`:""}</div>`:"";
+    return `<div class="team"><div class="thd">${teamChip(tid)}<div class="ti"><div class="tn">${T.nm}</div><div class="tl">${T.lead}</div></div><div class="vwrap">${delayChip(tid)}</div></div>
       <div class="tnow"><div class="nowrow"><div class="ic">${nowIc}</div>
-        <div class="lb"><div class="k">${nowK}</div><div class="v">${nowV} ${tag}</div><div class="tm">${nowT}</div></div></div>
+        <div class="lb"><div class="k">${nowK}</div><div class="v">${nowV} ${tag}</div><div class="tm">sched ${nowT}</div>${actHtml}</div></div>
         ${nextHtml}
         <div><div class="prog"><i style="width:${pct}%"></i></div>
           <div class="progt"><span>${v.finished?T.stops.length:v.idx} / ${T.stops.length} steps</span><span>${v.finished?"Done":pct+"%"}</span></div></div>
@@ -499,9 +540,11 @@ function renderCoord(){
     <div class="actions">${actions}${undo}</div>
     <div class="timeline">${T.stops.map((st,i)=>{
       const cls=i<v.idx?"done":(i===v.idx&&!v.finished?"cur":"");const last=i===T.stops.length-1;const live=(i===v.idx&&v.liveHere);
+      const a=(v.pg.acts||{})[i]||{};const dE=a.e?(istMin(a.e)-schedBounds(st).e):null;
+      const actrow=(a.s||a.e)?`<div class="actual">actual <b>${a.s?fmtClock(a.s):"—"}</b>${a.e?` → <b>${fmtClock(a.e)}</b>`:""}${dE!=null?` <span class="dlt ${deltaCls(dE)==="v-early"?"e":deltaCls(dE)==="v-warn"?"w":"l"}">(${fmtDelta(dE)})</span>`:""}</div>`:"";
       return `<div class="tlrow ${cls}"><div class="tlt tnum">${st.t}</div>
         <div class="tld"><div class="nodewrap"><div class="node"></div>${last?"":`<div class="rail"></div>`}</div></div>
-        <div class="tlc"><span class="kd">${KN[st.k]}</span><br>${stopLabel(st)} ${live?'<span class="tag live">live</span>':""}</div></div>`;
+        <div class="tlc"><span class="kd">${KN[st.k]}</span><br>${stopLabel(st)} ${live?'<span class="tag live">live</span>':""}${actrow}</div></div>`;
     }).join("")}</div></div>`;
   host.querySelectorAll("[data-act]").forEach(b=>b.addEventListener("click",()=>coordAction(b.dataset.act,tid)));
 }
@@ -535,11 +578,25 @@ async function writeTeam(tid){
 }
 async function coordAction(act,tid){
   if(act==="switch"){LS.del("bidp_team");renderCoord();return;}
-  const T=TEAMS[tid],pg=progress[tid];let nx={...pg};
-  if(act==="start"){nx.presenting=true;nx.startedAt=Date.now();}
-  else if(act==="complete"){nx.idx=Math.min(pg.idx+1,T.stops.length);nx.presenting=false;nx.startedAt=null;}
-  else if(act==="undo"){nx.idx=Math.max(pg.idx-1,0);nx.presenting=false;nx.startedAt=null;}
-  nx.updatedAt=Date.now();progress[tid]=nx;renderAll();
+  const T=TEAMS[tid],pg=progress[tid],n=T.stops.length,now=Date.now();
+  const acts=JSON.parse(JSON.stringify(pg.acts||{}));
+  const cur=i=>acts[i]||(acts[i]={});
+  let nx={...pg,acts};
+  if(act==="start"){                       // presentation actually begins
+    cur(pg.idx).s=now;nx.presenting=true;nx.startedAt=now;
+  }else if(act==="complete"){              // end current step, move to next
+    if(!cur(pg.idx).s)cur(pg.idx).s=now;   // guard: first step had no recorded start
+    cur(pg.idx).e=now;
+    const ni=Math.min(pg.idx+1,n);
+    if(ni<n)cur(ni).s=now;                 // next step starts the moment this one ends
+    nx.idx=ni;nx.presenting=false;nx.startedAt=null;
+  }else if(act==="undo"){
+    const pi=Math.max(pg.idx-1,0);
+    if(acts[pg.idx]){delete acts[pg.idx].s;delete acts[pg.idx].e;if(!Object.keys(acts[pg.idx]).length)delete acts[pg.idx];}
+    if(acts[pi])delete acts[pi].e;         // reopen previous step
+    nx.idx=pi;nx.presenting=false;nx.startedAt=null;
+  }
+  nx.updatedAt=now;progress[tid]=nx;renderAll();
   await writeTeam(tid);
 }
 
@@ -563,18 +620,33 @@ function renderAbout(){
   const cc=document.getElementById("rstc");if(cc)cc.addEventListener("click",()=>{resetArmed=false;renderAbout();});
 }
 async function doReset(){
-  for(const tid of TIDS){const nx={idx:0,presenting:false,startedAt:null,updatedAt:Date.now()};progress[tid]=nx;
+  for(const tid of TIDS){const nx={idx:0,presenting:false,startedAt:null,updatedAt:Date.now(),acts:{}};progress[tid]=nx;
     if(DB){try{await setDoc(doc(DB,"teams",tid),nx);}catch(e){console.warn(e);}}}
   renderAll();
 }
 
 /* ---- GLUE ---- */
-function renderAll(){renderBoard();if(!document.getElementById("view-coord").hidden)renderCoord();if(!document.getElementById("view-about").hidden)renderAbout();}
-const VIEWS=["board","coord","about"];
+function renderTimings(){
+  const host=document.getElementById("view-timings");if(!host)return;
+  host.innerHTML=`<div class="sec-h"><h2>Scheduled vs actual</h2><span class="hint">live start/end per step · Δ = minutes early (−) or late (+) against plan</span></div>`+
+  TIDS.map(tid=>{const T=TEAMS[tid],v=teamView(tid),d=teamDelay(tid);
+    const rows=T.stops.map((st,i)=>{const a=(v.pg.acts||{})[i]||{};const sb=schedBounds(st);
+      const dE=(a.e&&istMin(a.e)!=null)?istMin(a.e)-sb.e:null;
+      const cls=i<v.idx?"done":(i===v.idx&&!v.finished?"cur":"");
+      const dcell=dE==null?"—":`<span class="dlt ${deltaCls(dE)==="v-early"?"e":deltaCls(dE)==="v-warn"?"w":"l"}">${dE===0?"0":(dE<0?dE:"+"+dE)}</span>`;
+      return `<tr class="${cls}"><td>${KN[st.k]}</td><td>${stopLabel(st)}</td><td class="num">${st.t}</td>`+
+        `<td class="num">${a.s?fmtClock(a.s):"—"}</td><td class="num">${a.e?fmtClock(a.e):"—"}</td><td class="num">${dcell}</td></tr>`;}).join("");
+    return `<div class="tt-block"><div class="tt-team-h">${teamChip(tid,28)}<div><div style="font-weight:600">${T.nm}</div><div style="font-size:11.5px;color:var(--faint)">${T.lead}</div></div>`+
+      `<span class="vchip ${d.state==="pending"?"v-idle":deltaCls(d.delta)}" style="margin-left:auto">⏱ ${d.state==="pending"?"not started":fmtDelta(d.delta)}</span></div>`+
+      `<div class="ttbl-wrap"><table class="ttbl"><thead><tr><th>Type</th><th>Step</th><th>Sched</th><th>Act. start</th><th>Act. end</th><th>Δ</th></tr></thead><tbody>${rows}</tbody></table></div></div>`;
+  }).join("");
+}
+function renderAll(){renderBoard();if(!document.getElementById("view-coord").hidden)renderCoord();if(!document.getElementById("view-about").hidden)renderAbout();if(!document.getElementById("view-timings").hidden)renderTimings();}
+const VIEWS=["board","coord","timings","about"];
 function showView(v){VIEWS.forEach(x=>{document.getElementById("view-"+x).hidden=(x!==v);});
   document.querySelectorAll('.tabs button').forEach(b=>b.setAttribute("aria-selected",b.dataset.view===v));
   if(location.hash.slice(1)!==v)history.replaceState(null,"","#"+v);
-  if(v==="coord")renderCoord();if(v==="about")renderAbout();if(v==="board")renderBoard();}
+  if(v==="coord")renderCoord();if(v==="about")renderAbout();if(v==="board")renderBoard();if(v==="timings")renderTimings();}
 document.querySelectorAll('.tabs button').forEach(b=>b.addEventListener("click",()=>showView(b.dataset.view)));
 window.addEventListener("hashchange",()=>{const v=location.hash.slice(1);if(VIEWS.includes(v))showView(v);});
 
@@ -596,7 +668,7 @@ renderBoard();
       stale=false;if(staleTimer){clearTimeout(staleTimer);staleTimer=null;}
       dbReady=true;
       snap.forEach(d=>{const val=d.data()||{};const tid=d.id;if(progress[tid])
-        progress[tid]={idx:+val.idx||0,presenting:!!val.presenting,startedAt:val.startedAt||null,updatedAt:val.updatedAt||0};});
+        progress[tid]={idx:+val.idx||0,presenting:!!val.presenting,startedAt:val.startedAt||null,updatedAt:val.updatedAt||0,acts:val.acts||{}};});
       renderAll();
     },err=>{console.warn("snapshot error",err);dbReady=true;stale=false;renderAll();});
   }catch(e){console.error("Firebase init failed",e);dbReady=true;renderAll();}
